@@ -1,7 +1,7 @@
 """Shared analysis logic for UCATS-B flight records: masking, cal-event
 detection, calibration and its uncertainty, and the two export writers.
 
-Imported by `ucatsb_gui.py`, which is the only user interface. This module is
+Imported by `rasta_gui.py`, which is the only user interface. This module is
 deliberately **Qt-free** -- it needs pandas and (for the calibration figure)
 matplotlib, nothing more -- so a batch script or notebook can reuse
 `calibrate_series`, `calibration_uncertainty` or `export_icartt` without

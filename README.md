@@ -23,7 +23,7 @@ pip install -r requirements.txt
 ## Run
 
 ```
-python3 ucatsb_gui.py [/path/to/ucatsb-YYYYMMDDHH.csv]
+python3 rasta_gui.py [/path/to/ucatsb-YYYYMMDDHH.csv]
 ```
 
 The file is optional. You can start empty and use **Load Data** instead.
@@ -50,7 +50,7 @@ Settings are kept per gas, except the cal tanks, which are per flight.
 
 | Control | What it does |
 |---|---|
-| **Load Data** | Open a file, or pick from recently opened ones. A file that has moved is greyed out as `(missing)`. The list is stored in `.ucatsb_gui_state.yaml`. |
+| **Load Data** | Open a file, or pick from recently opened ones. A file that has moved is greyed out as `(missing)`. The list is stored in `.rasta_gui_state.yaml`. |
 | **Save…** | Writes the settings to a config file. A `•` means unsaved changes. See [Per-flight settings](#per-flight-settings). |
 | **Gas** | CO2, N2O, CH4, O3 or H2O, whichever the file has. On the Timeseries tab this is linked to the Correlations X axis. |
 | **Above / Other / Right axis** | Add a small panel above the main plot (detector pressure, cell temperature, or any column in the file) and optionally a second trace on a right-hand axis. |
@@ -434,7 +434,7 @@ RA line.
 underscores are stripped. Blank PI, mission, platform or location ID prompts
 before writing.
 
-The metadata is saved in `ucatsb_gui_config.yaml`, not in a flight config,
+The metadata is saved in `rasta_gui_config.yaml`, not in a flight config,
 because PI, affiliation and stipulations belong to the campaign. That file is
 tracked in git, so a fresh clone arrives filled in. **Save defaults** writes
 it. Export always uses what is in the boxes, saved or not.
@@ -480,9 +480,9 @@ sensor fault.
 
 | File | Purpose |
 |---|---|
-| `ucatsb_gui.py` | The PyQt5 viewer. |
-| `ucatsb_analysis.py` | Masking, cal detection, calibration, smoothing and export logic. A library with no GUI dependency, so a script or notebook can reuse it. |
-| `ucatsb_gui_config.yaml` | Shared by git: the [ICARTT header metadata](#header-metadata). No analysis settings. Written only by **Save defaults**. |
-| `.ucatsb_gui_state.yaml` | Local, hidden and gitignored: the recent-files list. |
+| `rasta_gui.py` | The PyQt5 viewer. |
+| `rasta_analysis.py` | Masking, cal detection, calibration, smoothing and export logic. A library with no GUI dependency, so a script or notebook can reuse it. |
+| `rasta_gui_config.yaml` | Shared by git: the [ICARTT header metadata](#header-metadata). No analysis settings. Written only by **Save defaults**. |
+| `.rasta_gui_state.yaml` | Local, hidden and gitignored: the recent-files list. |
 | `<dataset>_conf.yaml` | Written beside each CSV you save: that flight's settings, cal tanks, flags and smoothing. |
 | `cals.yaml` | The cal tank roster and the default pair. |

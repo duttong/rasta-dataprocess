@@ -18,12 +18,12 @@ See `requirements.txt`.
 
 ## Running
 
-- `python3 ucatsb_gui.py [csv_file]` — interactive PyQt5 viewer. The CSV
+- `python3 rasta_gui.py [csv_file]` — interactive PyQt5 viewer. The CSV
   argument is optional; a file can also be (re)picked at any time from
   within the GUI via the "Load Data" button, so the app can start with no
   argument at all.
 
-There is **no second entry point**. `ucatsb_analysis.py` is a library and is
+There is **no second entry point**. `rasta_analysis.py` is a library and is
 never run directly; the CO2-only `plot_co2_timeseries.py <csv>` CLI it used to
 carry was removed (2026-07-29) because the GUI supersedes it and it read the
 cal pairing from `cals.yaml`'s `cals:` block, mislabelling tanks on any flight
@@ -36,15 +36,23 @@ visual review (via `Read` on the saved PNG) is how changes here get checked.
 
 ## Architecture
 
-`ucatsb_analysis.py` is the shared logic module — masking, cal detection,
+`rasta_analysis.py` is the shared logic module — masking, cal detection,
 calibration and its uncertainty, and both export writers — and is **Qt-free
 on purpose**, so a batch script or notebook can reuse `calibrate_series` or
 `export_icartt` without a GUI toolkit. Don't import PyQt5 into it, and don't
-move data logic into `ucatsb_gui.py`, which is the GUI and nothing else.
+move data logic into `rasta_gui.py`, which is the GUI and nothing else.
 (It was `plot_co2_timeseries.py` until 2026-07-29; the name came from a
-standalone CO2 figure CLI that was removed in the same change.)
+standalone CO2 figure CLI that was removed in the same change.) **The three
+`ucatsb_*` files became `rasta_*` on 2026-10-10** — `rasta_gui.py`,
+`rasta_analysis.py`, `rasta_gui_config.yaml`, and the hidden state file
+`.rasta_gui_state.yaml` (the old name is still read as a fallback by
+`load_recent_files` and still gitignored). The same day the GUI class became
+`RastaGui` and the window, file-dialog and figure titles say "RASTA". Still
+named for the old instrument on purpose: the acquisition repo's
+`ucatsb-YYYYMMDDHH.csv` filenames (not ours to rename), and the "UCATS-B
+derived data" first line of the companion CSV's notes file.
 
-`ucatsb_gui.py` imports from it rather than duplicating: `drop_presync_rows`,
+`rasta_gui.py` imports from it rather than duplicating: `drop_presync_rows`,
 `find_intervals`, `merge_close_intervals`, `shade_intervals`,
 `cal_mean_points`, `smooth_pressure`, `pt_correction_factor`,
 `load_cal_roster`, `load_cal_assignment`,
@@ -54,7 +62,7 @@ writers (`export_companion_csv`, `export_icartt`, with
 `icartt_time_base`/`icartt_filename`/`DEFAULT_ICARTT_META`). Any change to
 masking/cal-detection/calibration behavior belongs in that shared module.
 
-**The shared palette lives in `ucatsb_analysis.py` and is imported, not
+**The shared palette lives in `rasta_analysis.py` and is imported, not
 redeclared.** Thirteen constants (`LINE_COLOR`, `CAL0_COLOR`, `MUTED_COLOR`,
 `D1_P_TARGET_MBARS`, …) were once defined in *both* files with identical
 values — agreeing by discipline alone, so an edit to one silently made the
@@ -168,7 +176,7 @@ band (like the orange/red masking bands) is shaded whether or not "Show
 calibrated" is on, since the band is how the user finds out those rows exist
 before turning the overlay on.
 
-Every view reads these through `UcatsbGui._analysis_for(gas)` /
+Every view reads these through `RastaGui._analysis_for(gas)` /
 `_calibration_for(gas)` / `_uncertainty_for(gas)` — **dicts keyed by gas**,
 not one slot for the gas on display, because the Correlations tab needs two
 gases' calibrations at once. `_get_analysis()`/`_get_calibration()` remain as
@@ -471,7 +479,7 @@ analyse a flight that flew something else.
 
 `info` is a rough round-number label (`50%`/`100%`) used only to name the
 cal-window rows. Every tank in the roster carries one as of 2026-07-29, but
-it stays **optional**: `_set_cal_row_label` in `ucatsb_gui.py` falls back to
+it stays **optional**: `_set_cal_row_label` in `rasta_gui.py` falls back to
 the serial rather than losing the label, so don't reintroduce a hard
 dependency on `info` being present — the next tank added to the roster may
 well arrive without one. `info` is now the *visible* text (a row label has far
@@ -516,7 +524,7 @@ per-gas branch, so adding a new gas is a matter of adding a `GASES` entry
 with the right `detector`, not touching `aux_trace_info` itself.
 
 Because the column set genuinely differs between flights,
-`UcatsbGui.__init__` reads the CSV header first (`nrows=0`) and only
+`RastaGui.__init__` reads the CSV header first (`nrows=0`) and only
 requests columns that exist, then filters `GASES` down to
 `self.available_gases` (only gases whose `value_col` is present) for the Gas
 combo box. Downstream code (`redraw`, etc.) still indexes the global `GASES`
@@ -586,7 +594,7 @@ an overlay around, but its scatter always needs a colour choice), and
 Calibration hides both. Neither combo is connected or populated by
 `_add_toolbar_combo` itself — the owner does both, per file.
 
-### GUI view-preservation (`ucatsb_gui.py` `redraw()`)
+### GUI view-preservation (`rasta_gui.py` `redraw()`)
 
 `redraw(preserve_view=False)` rebuilds the whole Figure from scratch every
 call (`self.figure.clear()` + fresh `add_subplot`/`add_gridspec`) rather than
@@ -920,8 +928,8 @@ two gases' analyses and redraw the timeseries.
 ### Box smoothing (`boxcar_smooth`, `_final_record`, 2026-10-10)
 
 Per-gas N-point boxcar (None/2–6) of the **delivered record**, for all five
-gases. Qt-free function in `ucatsb_analysis.py`; the GUI's single application
-point is `UcatsbGui._final_record(gas)` (cached in `self._final`, cleared in
+gases. Qt-free function in `rasta_analysis.py`; the GUI's single application
+point is `RastaGui._final_record(gas)` (cached in `self._final`, cleared in
 `refresh()`), which the timeseries overlay, `_corr_axis` and both export
 blocks all read. Don't smooth anywhere else, or the plot and the files
 disagree about whether a value was averaged.
@@ -1130,18 +1138,18 @@ rather than a physically plausible one. `load_config` fills missing keys from
 output of every already-saved config on first launch after the upgrade.
 
 **Verification scripts must pass `config_path=` *and* `state_path=` to scratch
-files *and* load a scratch copy of the CSV.** `UcatsbGui` writes the real
-`.ucatsb_gui_state.yaml` (the recent-files list) whenever a dataset loads, so
+files *and* load a scratch copy of the CSV.** `RastaGui` writes the real
+`.rasta_gui_state.yaml` (the recent-files list) whenever a dataset loads, so
 point that at a scratch path; `config_path` matters less now that only Save
 defaults writes it, but a test exercising that button would edit a *tracked*
 file. Settings themselves are no longer written
 without Save, but a test that exercises Save writes a config beside the CSV —
 so copy the CSV into the scratchpad rather than pointing the test at
 `~/Data/UCATSb/...`. Drive Save by monkeypatching
-`UcatsbGui._choose_config_name` (return a path, or None for cancel), and the
-config chooser by patching `UcatsbGui._choose_config_file`.
+`RastaGui._choose_config_name` (return a path, or None for cancel), and the
+config chooser by patching `RastaGui._choose_config_file`.
 
-**Patch `_choose_config_file` *before* constructing `UcatsbGui`, not after.**
+**Patch `_choose_config_file` *before* constructing `RastaGui`, not after.**
 It `exec_()`s a modal dialog, which under `QT_QPA_PLATFORM=offscreen` blocks
 forever with no output — and it fires from `load_csv` during `__init__`
 whenever the scratchpad already holds more than one config for that CSV, which
@@ -1357,7 +1365,7 @@ when opening one actually fails (`_try_load(..., forget_on_failure=True)`).
 
 `GASES["Ozone"]["valid_min"] = O3_VALID_MIN_PPB` (−15 ppb) and
 `GASES["H2O"]["valid_min"] = H2O_VALID_MIN_PPM` (−5 ppm) drive
-`below_floor_mask`, via `UcatsbGui._rejected_mask(gas)`. Declared per gas
+`below_floor_mask`, via `RastaGui._rejected_mask(gas)`. Declared per gas
 rather than special-cased by name, so any gas that gains a floor gets the same
 raw/filtered treatment for free — and *not* a control, because it is a
 statement about when the sensor is faulting rather than a judgement the user
@@ -1419,7 +1427,7 @@ rectangles, for three reasons that each killed an alternative:
   entry however wide, so "hundreds or thousands of points" is a handful of
   lines of YAML.
 
-The helpers live in `ucatsb_analysis.py` (`merge_ranges`, `add_ranges`,
+The helpers live in `rasta_analysis.py` (`merge_ranges`, `add_ranges`,
 `subtract_ranges`, `ranges_to_mask`, `ranges_row_count`). **`merge_ranges`
 merges *adjacent* runs as well as overlapping ones**, so a set of rows has
 exactly one representation — `_is_dirty()` deep-compares this, and two gesture
@@ -1755,11 +1763,11 @@ There are **two** app-level files beside the script, split by whether their
 contents are worth sharing, and the split is what lets the first one be
 tracked in git at all:
 
-- **`ucatsb_gui_config.yaml` — ICARTT metadata, tracked.** The campaign's PI,
+- **`rasta_gui_config.yaml` — ICARTT metadata, tracked.** The campaign's PI,
   affiliation, project and stipulations are the same on every machine, so a
   fresh clone should arrive with them filled in. Written by exactly one
   thing, `_save_shared_config`, called only from the **Save defaults** button.
-- **`.ucatsb_gui_state.yaml` — the recent-files list, gitignored.** Absolute
+- **`.rasta_gui_state.yaml` — the recent-files list, gitignored.** Absolute
   paths from one machine, useless to anyone else. Hidden because the app
   maintains it and there is nothing in it to hand-edit. Written by
   `_save_state`, called on **every dataset load** — which is precisely why it
@@ -1771,7 +1779,7 @@ so an upgrading user does not silently lose the list; the stale
 `recent_files:` block there is never written back, and the first
 `Save defaults` drops it.
 
-`icartt:` in `ucatsb_gui_config.yaml`, not in a `<dataset>_conf.yaml`
+`icartt:` in `rasta_gui_config.yaml`, not in a `<dataset>_conf.yaml`
 (explicitly requested): PI, affiliation, project and stipulations are
 properties of the campaign, so per-flight storage would mean retyping them for
 every file. Its own **Save defaults** button on the tab, its own

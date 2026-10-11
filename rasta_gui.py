@@ -5,7 +5,7 @@ Left panel: a Load Data button, gas selector (CO2/N2O), and masking controls
 (warm-up exclusion, detector pressure filter, and per-bottle calibration mean
 windows). Right panel: the resulting figure.
 
-Usage: python3 ucatsb_gui.py [csv_file]
+Usage: python3 rasta_gui.py [csv_file]
 
 The CSV can also be picked (or swapped out) from within the GUI via the
 "Load Data" button, so the CLI argument is optional -- run with no argument
@@ -35,7 +35,7 @@ from matplotlib.figure import Figure
 from matplotlib.widgets import RectangleSelector
 import matplotlib.dates as mdates
 
-from ucatsb_analysis import (
+from rasta_analysis import (
     drop_presync_rows, find_intervals, merge_close_intervals,
     shade_intervals, cal_mean_windows,
     load_cal_roster, load_cal_assignment, select_cal_bottles,
@@ -55,7 +55,7 @@ from ucatsb_analysis import (
     # The shared palette. These used to be declared a second time here, with
     # identical values -- two homes for one decision, agreeing only by
     # discipline, so editing one silently made the calibration panels and the
-    # timeseries disagree about what a color means. ucatsb_analysis is the
+    # timeseries disagree about what a color means. rasta_analysis is the
     # single home; only the two GUI-only colors below are declared here.
     LINE_COLOR, RIGHT_AXIS_COLOR, CAL_SHADE_COLOR, PRESSURE_EXCLUDE_COLOR,
     WARMUP_EXCLUDE_COLOR, PUMPS_EXCLUDE_COLOR, POST_CAL_FLUSH_COLOR,
@@ -110,9 +110,9 @@ TOOL_ON_FG = "#1b5e20"
 #   about the sample stream that this pipeline does not make. Settled with
 #   Eric, 2026-07-29; it was briefly `DMF` and then `None`.
 GASES = {
-    "CO2": {"value_col": "d1_CO2_ppm", "ylabel": "CO2 (ppm)", "title": "UCATS-B CO2 (uncalibrated) timeseries", "detector": "d1", "standard_name": "Gas_CO2_InSitu_S_DMF", "long_name": "Carbon dioxide dry air mole fraction"},
-    "N2O": {"value_col": "d1_N2O_ppb", "ylabel": "N2O (ppb)", "title": "UCATS-B N2O (uncalibrated) timeseries", "detector": "d1", "standard_name": "Gas_N2O_InSitu_S_DMF", "long_name": "Nitrous oxide dry air mole fraction"},
-    "CH4": {"value_col": "d2_CH4_ppb", "ylabel": "CH4 (ppb)", "title": "UCATS-B CH4 (uncalibrated) timeseries", "detector": "d2", "standard_name": "Gas_CH4_InSitu_S_DMF", "long_name": "Methane dry air mole fraction"},
+    "CO2": {"value_col": "d1_CO2_ppm", "ylabel": "CO2 (ppm)", "title": "RASTA CO2 (uncalibrated) timeseries", "detector": "d1", "standard_name": "Gas_CO2_InSitu_S_DMF", "long_name": "Carbon dioxide dry air mole fraction"},
+    "N2O": {"value_col": "d1_N2O_ppb", "ylabel": "N2O (ppb)", "title": "RASTA N2O (uncalibrated) timeseries", "detector": "d1", "standard_name": "Gas_N2O_InSitu_S_DMF", "long_name": "Nitrous oxide dry air mole fraction"},
+    "CH4": {"value_col": "d2_CH4_ppb", "ylabel": "CH4 (ppb)", "title": "RASTA CH4 (uncalibrated) timeseries", "detector": "d2", "standard_name": "Gas_CH4_InSitu_S_DMF", "long_name": "Methane dry air mole fraction"},
     # Ozone comes from its own dedicated sensor, not an Aeris detector, and
     # isn't run through the cal-bottle system -- has_masking=False skips the
     # warm-up/pressure-tol/cal-window machinery entirely for this gas, and
@@ -123,10 +123,10 @@ GASES = {
     # below it the sensor is faulting, not measuring. Declared per gas rather
     # than special-cased by name so the filtering code stays generic -- any
     # gas that gains a floor gets the same raw/filtered treatment.
-    "Ozone": {"value_col": "oz_o3best", "ylabel": "O3 (ppb)", "title": "UCATS-B O3 timeseries", "detector": None, "has_masking": False, "valid_min": O3_VALID_MIN_PPB, "short": "O3", "standard_name": "Gas_O3_InSitu_S_AVMR", "long_name": "Ozone volume mixing ratio in ambient air"},
+    "Ozone": {"value_col": "oz_o3best", "ylabel": "O3 (ppb)", "title": "RASTA O3 timeseries", "detector": None, "has_masking": False, "valid_min": O3_VALID_MIN_PPB, "short": "O3", "standard_name": "Gas_O3_InSitu_S_AVMR", "long_name": "Ozone volume mixing ratio in ambient air"},
     # Water vapour, from its own instrument (`w_*` columns) -- like Ozone it
     # has no cal bottles, so has_masking=False and it is plotted as recorded.
-    "H2O": {"value_col": "w_H2Obest", "ylabel": "H2O (ppm)", "title": "UCATS-B H2O timeseries", "detector": None, "has_masking": False, "valid_min": H2O_VALID_MIN_PPM, "standard_name": "Met_H2OMF_InSitu_None", "long_name": "Water vapour mole fraction in ambient air"},
+    "H2O": {"value_col": "w_H2Obest", "ylabel": "H2O (ppm)", "title": "RASTA H2O timeseries", "detector": None, "has_masking": False, "valid_min": H2O_VALID_MIN_PPM, "standard_name": "Met_H2OMF_InSitu_None", "long_name": "Water vapour mole fraction in ambient air"},
 }
 
 
@@ -211,11 +211,11 @@ def aux_trace_info(selection: str, gas: str, other_column: str = None):
 # TWO app-level files beside the script, split by whether the contents are
 # worth sharing:
 #
-# - `ucatsb_gui_config.yaml` holds the ICARTT header metadata and is TRACKED
+# - `rasta_gui_config.yaml` holds the ICARTT header metadata and is TRACKED
 #   IN GIT. PI, affiliation, project and stipulations describe the campaign,
 #   so every machine analysing a SABRE flight wants the same values and a
 #   fresh clone should arrive with them already filled in.
-# - `.ucatsb_gui_state.yaml` holds the recent-files list and is not. It is
+# - `.rasta_gui_state.yaml` holds the recent-files list and is not. It is
 #   absolute paths from one machine, of no use to anyone else, and hidden
 #   because the app maintains it -- there is nothing in it to hand-edit.
 #
@@ -223,8 +223,12 @@ def aux_trace_info(selection: str, gas: str, other_column: str = None):
 # is rewritten on **every dataset load**, so while the two shared a file that
 # file was permanently modified in the working tree. The shared one is now
 # written only by the Export tab's "Save defaults" button.
-DEFAULT_CONFIG_PATH = Path(__file__).parent / "ucatsb_gui_config.yaml"
-DEFAULT_STATE_PATH = Path(__file__).parent / ".ucatsb_gui_state.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).parent / "rasta_gui_config.yaml"
+DEFAULT_STATE_PATH = Path(__file__).parent / ".rasta_gui_state.yaml"
+# The state file's name before the 2026-10-10 rename from ucatsb_* to rasta_*.
+# Read (never written) when the new one does not exist yet, so renaming the
+# files does not silently empty each machine's recent-files list.
+LEGACY_STATE_PATH = Path(__file__).parent / ".ucatsb_gui_state.yaml"
 RECENT_FILES_MAX = 10
 
 # What a figure can color points by: {key: (label, column, colorbar label)}.
@@ -364,7 +368,7 @@ def load_config(path: Path) -> dict:
     return config
 
 
-def load_recent_files(path: Path, legacy_path: Path = None) -> list:
+def load_recent_files(path: Path, legacy_path=None) -> list:
     """The recently-opened datasets from the app-level state file, newest first.
 
     App-level and never per-flight, the mirror image of `cals:` (which is
@@ -372,15 +376,20 @@ def load_recent_files(path: Path, legacy_path: Path = None) -> list:
     not of any one dataset, and writing it into a flight's conf would put a
     list of unrelated paths beside that flight's settings.
 
-    `legacy_path` is the shared config, where this list used to live before
-    the two were split. It is read only when the state file has nothing, and
-    never written back there -- the next save lands in the state file and the
-    stale block in the shared config is simply ignored from then on. Without
+    `legacy_path` is where this list used to live: the shared config before the
+    two were split, and the state file's own old name before the rasta_*
+    rename. One path or several, tried in order, and read only when the state
+    file has nothing -- never written back there. The next save lands in the
+    state file and the stale copies are simply ignored from then on. Without
     this a user upgrading loses a list they never asked to lose.
     """
     loaded = _read_yaml(path).get("recent_files")
-    if not isinstance(loaded, list) and legacy_path is not None:
-        loaded = _read_yaml(legacy_path).get("recent_files")
+    if isinstance(legacy_path, (str, Path)):
+        legacy_path = [legacy_path]
+    for fallback in (legacy_path or ()):
+        if isinstance(loaded, list):
+            break
+        loaded = _read_yaml(Path(fallback)).get("recent_files")
     if not isinstance(loaded, list):
         return []
     return list(dict.fromkeys(p for p in loaded if isinstance(p, str)))[:RECENT_FILES_MAX]
@@ -1021,11 +1030,11 @@ class PlotPane(QWidget):
             self.on_box(ax, *self._box[1])
 
 
-class UcatsbGui(QMainWindow):
+class RastaGui(QMainWindow):
     def __init__(self, csv_path: Path = None, config_path: Path = DEFAULT_CONFIG_PATH,
                  state_path: Path = DEFAULT_STATE_PATH):
         super().__init__()
-        self.setWindowTitle("UCATS-B Viewer")
+        self.setWindowTitle("RASTA Viewer")
         self.resize(1300, 750)
 
         self.csv_path = None
@@ -1051,7 +1060,13 @@ class UcatsbGui(QMainWindow):
         self.config = load_config(None)
         # legacy_path picks up a list left in the shared config by a version
         # before the two files were split; see load_recent_files.
-        self.recent_files = load_recent_files(state_path, legacy_path=config_path)
+        # The old-name state file only stands in for the DEFAULT state file: a
+        # caller that points state_path elsewhere (a verification script) must
+        # not have the real machine's list pulled into it.
+        legacy_paths = [config_path]
+        if Path(state_path) == DEFAULT_STATE_PATH:
+            legacy_paths.insert(0, LEGACY_STATE_PATH)
+        self.recent_files = load_recent_files(state_path, legacy_path=legacy_paths)
         # ICARTT header metadata: app-level, not per-dataset (see
         # load_icartt_meta), with its own Save button on the Export tab and
         # its own saved-state snapshot -- the per-dataset Save writes a
@@ -1284,7 +1299,7 @@ class UcatsbGui(QMainWindow):
         # dataset opened from the command line is remembered as well.
         self._remember_recent(csv_path)
 
-        self.setWindowTitle(f"UCATS-B Viewer - {csv_path.name}")
+        self.setWindowTitle(f"RASTA Viewer - {csv_path.name}")
         self._update_file_labels()
         # A flight whose schema predates j_pumps can't offer the filter. The
         # explicit disable survives mask_box's setEnabled(has_masking), since
@@ -1814,7 +1829,7 @@ class UcatsbGui(QMainWindow):
             return
         start_dir = str(self.csv_path.parent) if self.csv_path else str(Path.cwd())
         path_str, _ = QFileDialog.getOpenFileName(
-            self, "Load UCATS-B CSV", start_dir, "CSV Files (*.csv);;All Files (*)"
+            self, "Load RASTA CSV", start_dir, "CSV Files (*.csv);;All Files (*)"
         )
         if not path_str:
             return
@@ -2986,7 +3001,7 @@ class UcatsbGui(QMainWindow):
         # sentences, so they get the full width instead.
         meta_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         meta_note = QLabel(
-            "Saved in ucatsb_gui_config.yaml and reused for every flight — "
+            "Saved in rasta_gui_config.yaml and reused for every flight — "
             "these are properties of the campaign, not of one dataset, so "
             "they are deliberately not written to a <dataset>_conf.yaml. "
             "That file is shared through the repository, so a fresh checkout "
@@ -6469,7 +6484,7 @@ class UcatsbGui(QMainWindow):
         date_str = self.df["datetime"].iloc[0].strftime("%Y-%m-%d")
         quals = {x_qual, y_qual}
         title_qual = quals.pop() if len(quals) == 1 else "see axis labels"
-        ax.set_title(f"UCATS-B {y_gas} vs {x_gas} ({title_qual}, {date_str})",
+        ax.set_title(f"RASTA {y_gas} vs {x_gas} ({title_qual}, {date_str})",
                      color=TEXT_COLOR, loc="left")
         ax.grid(True, color=GRID_COLOR, linewidth=0.8)
 
@@ -6699,7 +6714,7 @@ def main():
     csv_path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
 
     app = QApplication(sys.argv)
-    window = UcatsbGui(csv_path)
+    window = RastaGui(csv_path)
     window.show()
     sys.exit(app.exec_())
 
