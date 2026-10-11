@@ -1,4 +1,4 @@
-# ucatsb-data
+# rasta-dataprocess
 
 Post-flight tools for viewing, calibrating and exporting UCATS-B logs. The
 instrument is now named RASTA (Rapid Analyzer for Stratospheric Transport and
