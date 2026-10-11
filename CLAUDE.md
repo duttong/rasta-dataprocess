@@ -917,12 +917,63 @@ mask, calibration or setting, so going through `refresh()` would clear both
 per-gas caches and dirty every pane — making a marker-size nudge recompute
 two gases' analyses and redraw the timeseries.
 
+### Box smoothing (`boxcar_smooth`, `_final_record`, 2026-10-10)
+
+Per-gas N-point boxcar (None/2–6) of the **delivered record**, for all five
+gases. Qt-free function in `ucatsb_analysis.py`; the GUI's single application
+point is `UcatsbGui._final_record(gas)` (cached in `self._final`, cleared in
+`refresh()`), which the timeseries overlay, `_corr_axis` and both export
+blocks all read. Don't smooth anywhere else, or the plot and the files
+disagree about whether a value was averaged.
+
+- **Output-only, after every mask has blanked its rows**, like `cal_mask`/
+  `flush_mask`/`exclude_mask`. It never feeds `cal_mean_points`, the drift
+  nodes, `slope`/`intercept`/`span_gain`/`loo_rms` or `sigma` (verified
+  identical). `sigma` is a calibration uncertainty and deliberately not reduced
+  by averaging, consistent with single-sample noise being absent from it.
+- **Masked edges — the settled answer: a gap is a wall.** Output NaN pattern ==
+  input NaN pattern (never resurrect a blanked row: `blanked` and the ICARTT
+  `-99999` rows are defined by it); no window crosses a NaN or a time jump
+  wider than `(n+1)` median steps; the window **shrinks symmetrically** at a
+  wall (`R=min(fwd, behind, ahead)`, `L=min(back, behind, ahead+(back-fwd))`),
+  the same rule `smooth_pressure` uses at the ends of the record, so a ramp is
+  reproduced exactly (odd N) and edge rows are not a shifted mean. Rejected:
+  one-sided full-width windows (biased on a trend, which is where a cell
+  clears after a cal), dropping edge rows to force a full window (deletes
+  data), padding (invents it). Even N is centred half a sample early; the far
+  wall keeps that offset.
+- **Stored as its own `smoothing:` block** in the flight conf, `{gas: n}`, not
+  per-gas settings keys: Ozone/H2O have no settings block. `load_smoothing` /
+  `smoothing_to_yaml`; part of `_current_state()`, so dirty state works.
+  `save_config` gained `smoothing=` — **omitted is a deletion**, as with
+  `flagged=`; `on_save_clicked` passes it. Not in `COPIED_SETTING_KEYS`: it is a
+  per-gas judgement, like the drift model.
+- **Two views of one dict.** `smooth_combo` (left panel, `Smoothing` box,
+  deliberately outside the `setEnabled(has_masking)` list) and
+  `corr_smooth_combo` (bottom of Calibration Settings, enabled for Ozone/H2O
+  too, carrying its own label inside the row so the form's label column does
+  not widen). Both go through `_set_smoothing` → `refresh(preserve_view=True)`;
+  `_sync_smooth_controls` repoints them from `_select_gas` and
+  `_sync_corr_cal_controls` (before that method's early return).
+- **Visible only with the overlay on.** The raw trace is never smoothed, so
+  with the toolbar's Calibrated combo on Off there is nothing to see on the
+  Timeseries; Correlations and the exports always use it. The legend, note
+  block, correlation axis labels and Export summary all name the window.
+- **Exports:** `<gas>_cal` / `<gas>_filtered` is the smoothed column.
+  `companion_notes` says so and that slope/intercept describe the UNSMOOTHED
+  value (so `slope * raw + intercept` no longer reproduces the column, same
+  class of caveat as `_pt_factor`). Per the "delivered file describes the data,
+  not the analysis" rule the ICARTT header is not annotated.
+- **Verify after touching it:** NaN pattern identical with and without;
+  `cal_points`, `span_gain`, `loo_rms`, `slope`, `sigma` identical; no leak
+  across a gap (perturb one side, other side bit-identical); odd-N ramp exact.
+
 ### Config persistence: explicit save only
 
 Settings live in one block per gas (`warmup_min`, `pressure_tol_mbar`,
 `flag_air_s`, `cal1_window_s`, `cal2_window_s`, `drift_model`, `fixed_slope`,
-`drift_smooth_events`) plus the flight's `cals:` pairing, in a YAML file
-beside the CSV. **Nothing is written without `on_save_clicked`.** The
+`drift_smooth_events`) plus the flight's `cals:` pairing, `flagged:` rows and
+`smoothing:` choices, in a YAML file beside the CSV. **Nothing is written without `on_save_clicked`.** The
 requirement driving this: open a saved analysis, experiment, quit — and the
 file is exactly as it was. So:
 
@@ -1528,10 +1579,10 @@ Flag does not.
   the autoscale that captured is the one that still includes the hidden
   markers.
 
-`save_config` now carries **two** flight-config blocks, so its
-omitted-block-is-a-deletion trap is live again on that path: a save passing
-`cal_selection=` but forgetting `flagged=` discards every flagged point.
-`on_save_clicked` passes both.
+`save_config` now carries **three** flight-config blocks (`cals`, `flagged`,
+`smoothing`), so its omitted-block-is-a-deletion trap is live on that path: a
+save passing `cal_selection=` but forgetting `flagged=` discards every flagged
+point. `on_save_clicked` passes all three.
 
 ### Export tab: two products from one set of "gas blocks"
 

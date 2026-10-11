@@ -42,6 +42,7 @@ from ucatsb_analysis import (
     most_common_serial, mean_std_label, calibrate_series, interp_hold,
     post_cal_flush_mask,
     cal_switch_mask, below_floor_mask, smooth_pressure, pt_correction_factor,
+    boxcar_smooth, smooth_label, SMOOTH_POINT_CHOICES,
     O3_VALID_MIN_PPB, H2O_VALID_MIN_PPM,
     box_stats, calibration_uncertainty, linear_fit,
     plot_calibration_panels,
@@ -481,6 +482,32 @@ def flagged_to_yaml(flagged: dict, raw_rows: int):
     }
 
 
+def load_smoothing(path: Path) -> dict:
+    """The flight's per-gas box-smooth choice, `{gas: points}`, from the
+    `smoothing:` block of its conf file. Empty when there is none, which is
+    "no smoothing anywhere" -- the no-op, so a config that predates the
+    feature behaves exactly as it did.
+
+    Its own block rather than a key in each gas's settings block: Ozone and
+    H2O carry no settings block at all (no masking, nothing to tune), and they
+    are two of the five gases this applies to. A value that is not one of the
+    offered windows is dropped rather than trusted, since it lands straight
+    in a window length.
+    """
+    loaded = _read_yaml(path).get("smoothing")
+    if not isinstance(loaded, dict):
+        return {}
+    return {gas: int(n) for gas, n in loaded.items()
+            if gas in GASES and isinstance(n, int) and not isinstance(n, bool)
+            and n in SMOOTH_POINT_CHOICES and n >= 2}
+
+
+def smoothing_to_yaml(smoothing: dict) -> dict:
+    """The `smoothing:` block as plain data, dropping gases left on None so a
+    flight nobody smoothed writes no block at all."""
+    return {gas: int(n) for gas, n in sorted(smoothing.items()) if n and int(n) >= 2}
+
+
 class _BlockStyleDumper(yaml.SafeDumper):
     """A SafeDumper that writes multi-line strings as YAML block scalars.
 
@@ -502,22 +529,25 @@ _BlockStyleDumper.add_representer(str, _represent_str)
 
 
 def save_config(path: Path, config: dict, cal_selection: dict = None,
-                flagged: dict = None,
+                flagged: dict = None, smoothing: dict = None,
                 recent_files: list = None, icartt_meta: dict = None):
     """Write the per-gas blocks, plus whichever of the non-gas blocks belongs
     in this file: the tank selection and the manually flagged rows for a
     flight's own conf, the ICARTT header metadata for the shared app config,
     the recent-file list for the app state file. **One file's blocks per
-    call** -- see load_cal_selection, load_flagged, load_icartt_meta and
-    load_recent_files for why each lives where it does.
+    call** -- see load_cal_selection, load_flagged, load_smoothing,
+    load_icartt_meta and load_recent_files for why each lives where it does.
 
     This writes a *fresh* document, so an omitted block is a deletion, the
     same trap the per-gas settings have with _controls_to_settings(). The
-    flight config now carries *two* non-gas blocks, so that trap is live again
-    on this path: a save that passes `cal_selection=` but forgets `flagged=`
-    silently discards every flagged point. on_save_clicked passes both.
+    flight config carries *three* non-gas blocks, so that trap is live on this
+    path: a save that passes `cal_selection=` but forgets `flagged=` silently
+    discards every flagged point, and one that forgets `smoothing=` silently
+    resets every gas to unsmoothed. on_save_clicked passes all three.
     """
     doc = dict(config)
+    if smoothing:
+        doc = {"smoothing": dict(smoothing), **doc}
     if flagged:
         doc = {"flagged": dict(flagged), **doc}
     if cal_selection:
@@ -1057,6 +1087,9 @@ class UcatsbGui(QMainWindow):
         self._analysis = {}
         self._calibration = {}
         self._uncertainty = {}
+        # The finished (calibrated or filtered), SMOOTHED record per gas. A
+        # cache like its siblings and cleared at the same single site.
+        self._final = {}
         # Rebuilt by every redraw(); initialised here so on_stats_box is safe
         # to reach before the first draw.
         self._stats_traces = {}
@@ -1081,6 +1114,10 @@ class UcatsbGui(QMainWindow):
         # numbers. Per flight and per gas; empty is the no-op, so a flight
         # nobody has flagged behaves exactly as it did before the feature.
         self.flagged = {}
+        # Per-gas box-smooth length in points, {gas: 2..6}; a gas left out is
+        # unsmoothed. Covers all five gases -- including the two with no
+        # settings block -- so it is its own dict and its own conf block.
+        self.smoothing = {}
         # Session-only undo stack of previous `flagged` dicts. Deliberately
         # not persisted: it is a property of this editing session, and a
         # config that could undo its own contents would be a strange object.
@@ -1337,6 +1374,7 @@ class UcatsbGui(QMainWindow):
         self.flagged, flag_complaint = (load_flagged(path, raw_rows) if path
                                         else ({}, None))
         self._flag_undo = []
+        self.smoothing = load_smoothing(path) if path else {}
         self._rebuild_cal_bottles()
         # config_path is what Save offers as the default filename. With no
         # config loaded that is the conventional name for this dataset, so
@@ -1647,6 +1685,23 @@ class UcatsbGui(QMainWindow):
         self.corr_fixed_slope_reset_button.setVisible(False)
         corr_drift_row.addWidget(self.corr_fixed_slope_reset_button)
         corr_cal_form.addRow(corr_drift_row)
+
+        # Same state as the left panel's Smoothing box -- one dict, two views
+        # of it -- and, unlike the rows above, enabled for every tracer
+        # including Ozone and H2O. Carries its own label inside the row, like
+        # the Model row, so the form's shared label column does not widen.
+        corr_smooth_row = QHBoxLayout()
+        corr_smooth_row.setSpacing(4)
+        corr_smooth_label = QLabel("Box smooth:")
+        corr_smooth_label.setToolTip(self.SMOOTH_TOOLTIP)
+        corr_smooth_row.addWidget(corr_smooth_label)
+        self.corr_smooth_combo = QComboBox()
+        self._fill_smooth_combo(self.corr_smooth_combo)
+        self.corr_smooth_combo.setToolTip(self.SMOOTH_TOOLTIP)
+        self.corr_smooth_combo.currentIndexChanged.connect(self.on_corr_smooth_changed)
+        corr_smooth_row.addWidget(self.corr_smooth_combo)
+        corr_smooth_row.addStretch(1)
+        corr_cal_form.addRow(corr_smooth_row)
 
         vbox.addWidget(self.corr_cal_box)
 
@@ -2400,6 +2455,25 @@ class UcatsbGui(QMainWindow):
         # describe one of them.
         vbox.addWidget(self.cal_box)
 
+        # Box smoothing of the delivered record, per gas and for ALL five --
+        # which is why it is deliberately absent from the
+        # setEnabled(has_masking) list in _select_gas and why it is not a key
+        # in the per-gas settings (Ozone and H2O have no settings block). It
+        # lives in its own `smoothing:` conf block; see load_smoothing.
+        self.smooth_box = QGroupBox("Smoothing")
+        smooth_form = QFormLayout(self.smooth_box)
+        smooth_form.setContentsMargins(6, 6, 6, 6)
+        smooth_form.setSpacing(4)
+        smooth_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.smooth_combo = QComboBox()
+        self._fill_smooth_combo(self.smooth_combo)
+        self.smooth_combo.setToolTip(self.SMOOTH_TOOLTIP)
+        self.smooth_combo.currentIndexChanged.connect(self.on_smooth_changed)
+        smooth_label_widget = QLabel("Box smooth:")
+        smooth_label_widget.setToolTip(self.SMOOTH_TOOLTIP)
+        smooth_form.addRow(smooth_label_widget, self.smooth_combo)
+        vbox.addWidget(self.smooth_box)
+
         # Deliberately NOT in the setEnabled(has_masking) list in _select_gas:
         # Ozone is the gas this feature exists for, and it is precisely the
         # one with no masking settings to enable. Its own group box for the
@@ -3120,6 +3194,7 @@ class UcatsbGui(QMainWindow):
             has_masking and self._temperature_column(gas) is not None)
         if has_masking:
             self._apply_settings_to_controls(self.config[gas])
+        self._sync_smooth_controls()
         self._update_flag_readout()
 
     def on_gas_changed(self, new_gas: str):
@@ -3181,6 +3256,75 @@ class UcatsbGui(QMainWindow):
         needs the gate back rather than baking "always enabled" in at
         __init__."""
         self.main_pane.calibrated_action.setEnabled(True)
+
+    SMOOTH_TOOLTIP = (
+        "N-point box (moving-average) smooth of this gas's delivered record:\n"
+        "the calibrated trace (or the filtered one, for Ozone and H2O), the\n"
+        "Correlations axes and both exports. The raw trace is never smoothed,\n"
+        "and neither is the calibration -- it is applied last.\n\n"
+        "Masked data is a wall. Blanked rows (cal periods, flush, warm-up,\n"
+        "flags, faults) stay blank and no average reaches across one; the\n"
+        "window shrinks symmetrically at the edge of each stretch of good\n"
+        "air, so the row beside a gap uses fewer points and the edge row\n"
+        "keeps its own value. An even count is centred half a sample early.\n\n"
+        "Chosen per gas and saved with the flight's config."
+    )
+
+    @staticmethod
+    def _fill_smooth_combo(combo):
+        """None / 2pt ... 6pt, the point count riding as item data. One filler
+        for both panels so they cannot offer different windows."""
+        for points in SMOOTH_POINT_CHOICES:
+            combo.addItem("None" if points == 0 else f"{points}pt", points)
+
+    def _sync_smooth_controls(self):
+        """Show each panel's smoothing combo the choice of the gas it edits:
+        the Timeseries panel's gas, and the Correlations settings target.
+        Signals blocked, and tolerant of either panel not existing yet --
+        this is reached during construction, from _select_gas."""
+        pairs = []
+        if hasattr(self, "smooth_combo"):
+            pairs.append((self.smooth_combo, self.current_gas))
+        if hasattr(self, "corr_smooth_combo") and hasattr(self, "corr_cal_target"):
+            pairs.append((self.corr_smooth_combo, self._corr_cal_gas()))
+        for combo, gas in pairs:
+            index = combo.findData(self._smooth_points(gas) if gas else 0)
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(index, 0))
+            combo.blockSignals(False)
+            combo.setEnabled(bool(gas))
+
+    def on_smooth_changed(self, _index):
+        if self._loading or self._initializing or self.current_gas is None:
+            return
+        self._set_smoothing(self.current_gas, self.smooth_combo.currentData())
+
+    def on_corr_smooth_changed(self, _index):
+        if self._loading or self._initializing:
+            return
+        gas = self._corr_cal_gas()
+        if gas:
+            self._set_smoothing(gas, self.corr_smooth_combo.currentData())
+
+    def _set_smoothing(self, gas, points):
+        """The one writer of `self.smoothing`, from either panel.
+
+        Goes through refresh() rather than a lighter path: smoothing changes
+        the delivered record every pane reads (the overlay, the Correlations
+        axes, the Export summary), and refresh() is the single site that
+        clears the caches those are served from. View preserved -- it is a
+        tweak made while looking at the very trace that changes.
+        """
+        points = int(points or 0)
+        if points == self._smooth_points(gas):
+            return
+        if points >= 2:
+            self.smoothing[gas] = points
+        else:
+            self.smoothing.pop(gas, None)
+        self._sync_smooth_controls()
+        self._mark_dirty()
+        self.refresh(preserve_view=True)
 
     def on_control_changed(self):
         if self._loading or self._initializing or self.current_gas is None:
@@ -3246,7 +3390,8 @@ class UcatsbGui(QMainWindow):
     def _current_state(self):
         """Everything a config file holds, as comparable plain data."""
         return copy.deepcopy({"config": self.config, "cals": self.cal_selection,
-                              "flagged": self.flagged})
+                              "flagged": self.flagged,
+                              "smoothing": smoothing_to_yaml(self.smoothing)})
 
     def _snapshot_state(self):
         """Take the current settings as "saved" -- called after a load or a
@@ -3460,7 +3605,8 @@ class UcatsbGui(QMainWindow):
             return False
         try:
             save_config(path, self.config, cal_selection=self.cal_selection,
-                        flagged=flagged_to_yaml(self.flagged, len(self.raw_df)))
+                        flagged=flagged_to_yaml(self.flagged, len(self.raw_df)),
+                        smoothing=smoothing_to_yaml(self.smoothing))
         except OSError as e:
             QMessageBox.warning(self, "Save configuration",
                                 f"Could not write {path.name}:\n{e}")
@@ -3658,6 +3804,9 @@ class UcatsbGui(QMainWindow):
         gas = self._corr_cal_gas()
         has_settings = bool(gas and GASES[gas].get("has_masking", True))
         self.corr_cal_box.setEnabled(True)
+        # Before the early return below: smoothing applies to every gas, so
+        # it is exactly the control that must keep working on Ozone and H2O.
+        self._sync_smooth_controls()
         if not has_settings:
             for widget in (
                     self.corr_pressure_correct_check,
@@ -4550,13 +4699,16 @@ class UcatsbGui(QMainWindow):
                 "unit": gas_unit(gas_key),
                 "raw": self.raw_df[info["value_col"]],
                 "masks": {},
+                # 0 = the record as calibrated/filtered; N = an N-point box
+                # mean of it. Described, never applied, by the writers --
+                # `final` is already the smoothed record.
+                "smooth_points": self._smooth_points(gas_key),
             }
             if not info.get("has_masking", True):
                 # Ozone and water do not use cal bottles here. Keep their
                 # filtered values, but do not call them calibrated.
                 removed = self._removed_mask(gas_key)
-                block["final"] = self._to_raw_rows(
-                    self.df[info["value_col"]].mask(removed))
+                block["final"] = self._to_raw_rows(self._final_record(gas_key))
                 block["final_kind"] = "filtered"
                 block["masks"]["below_floor"] = self._to_raw_rows(
                     self._rejected_mask(gas_key))
@@ -4571,7 +4723,7 @@ class UcatsbGui(QMainWindow):
                 sigma, _ = self._uncertainty_for(gas_key)
                 audit_masks, diagnostics = self._export_cal_diagnostics(
                     gas_key, analysis)
-                block["final"] = self._to_raw_rows(result["calibrated"])
+                block["final"] = self._to_raw_rows(self._final_record(gas_key))
                 block["final_kind"] = "calibrated"
                 # These fields describe the delivered values, so both CSV and
                 # ICARTT can report the same correction settings.
@@ -4648,12 +4800,16 @@ class UcatsbGui(QMainWindow):
                 lines.append(f"{gas:<6} calibrated      {n:>7,} good ambient rows"
                              + (f"   (normalised before calibrating: "
                                 f"{', '.join(corrections)})"
-                                if corrections else ""))
+                                if corrections else "")
+                             + (f"   [{smooth_label(block['smooth_points'])}]"
+                                if block.get("smooth_points") else ""))
             elif block.get("final_kind") == "filtered":
                 n = int(block["final"].notna().sum())
                 removed = int(block["masks"]["below_floor"].sum())
                 lines.append(f"{gas:<6} filtered only   {n:>7,} rows"
-                             + (f"   ({removed} below floor removed)" if removed else ""))
+                             + (f"   ({removed} below floor removed)" if removed else "")
+                             + (f"   [{smooth_label(block['smooth_points'])}]"
+                                if block.get("smooth_points") else ""))
             else:
                 lines.append(f"{gas:<6} NOT calibrated  {block.get('reason', '')}")
         rows = len(self.raw_df)
@@ -4808,6 +4964,7 @@ class UcatsbGui(QMainWindow):
         self._analysis.clear()
         self._calibration.clear()
         self._uncertainty.clear()
+        self._final.clear()
         for pane in self._dirty:
             self._dirty[pane] = True
             # A requested full rescale has to survive until it is actually
@@ -4919,6 +5076,42 @@ class UcatsbGui(QMainWindow):
         calibrate_series-free display path.
         """
         return self._rejected_mask(gas_key) | self._flag_mask(gas_key)
+
+    def _smooth_points(self, gas_key):
+        """This gas's box-smooth length in points; 0 means unsmoothed."""
+        n = int(self.smoothing.get(gas_key, 0) or 0)
+        return n if n >= 2 else 0
+
+    def _final_record(self, gas_key):
+        """The record this gas DELIVERS -- calibrated for a cal-bottle gas,
+        floor-filtered for Ozone/H2O -- with that gas's box smooth applied.
+        None when a cal-bottle gas has no usable calibration.
+
+        The one place smoothing is applied, read by the timeseries overlay,
+        the Correlations axes and both exports, so the plot and the files
+        cannot disagree about whether a value was averaged.
+
+        **Output-only, after every mask has blanked its rows.** That ordering
+        is the answer to what a mean should do at a masked edge: see
+        `boxcar_smooth` -- a masked row stays NaN, and no window reaches across
+        one. It never feeds the calibration: the cal means and drift nodes come
+        from `cal_mean_points` on the unsmoothed measurement, and `slope` /
+        `intercept` / `sigma` stay per-row and untouched.
+
+        Cached per gas and cleared in refresh() with the other caches.
+        """
+        if gas_key in self._final:
+            return self._final[gas_key]
+        info = GASES[gas_key]
+        if not info.get("has_masking", True):
+            base = self.df[info["value_col"]].mask(self._removed_mask(gas_key))
+        else:
+            result = self._calibration_for(gas_key)
+            base = result["calibrated"] if (result or {}).get("ok") else None
+        final = (None if base is None
+                 else boxcar_smooth(self.df["datetime"], base, self._smooth_points(gas_key)))
+        self._final[gas_key] = final
+        return final
 
     def _analysis_for(self, gas_key):
         """Masks, cal intervals and per-injection cal means for one gas, from
@@ -5278,6 +5471,7 @@ class UcatsbGui(QMainWindow):
         # series is its presentable analogue -- the instrument's own already-
         # calibrated product, just not run through this repo's calibration.
         show_filtered = not has_masking and (bool(removed.any()) or self.show_calibrated)
+        smooth_n = self._smooth_points(self.current_gas)
         # This gas's half of `color_cal` below: exactly one of the two is
         # ever True for a given gas (has_masking makes them mutually
         # exclusive), and downstream legend/colorbar/note code checks both.
@@ -5292,9 +5486,13 @@ class UcatsbGui(QMainWindow):
             # Rejected rows stay as NaN rather than being dropped, so the red
             # line breaks over them instead of drawing across the removal --
             # same reasoning as the calibrated trace below.
-            filtered = df[value_col].mask(removed)
+            # Smoothed here (a no-op when the gas is on None) so the red trace
+            # is the record that is exported; the blue raw trace stays raw.
+            filtered = self._final_record(self.current_gas)
             self._register_stats_trace(
-                "main:filtered", f"{self.current_gas} (filtered)", ax,
+                "main:filtered",
+                f"{self.current_gas} (filtered"
+                + (f", {smooth_label(smooth_n)}" if smooth_n else "") + ")", ax,
                 df["datetime"], filtered, unit)
             if filtered_color:
                 # Same scatter-in-place-of-line swap as the calibrated branch
@@ -5330,9 +5528,14 @@ class UcatsbGui(QMainWindow):
             # of being dropped, so the line breaks over them; dropping them
             # would draw a straight segment across each gap and hide the
             # removal.
-            calibrated = calibration["calibrated"]
+            # The delivered record: smoothed when this gas has a box smooth
+            # set. Masked rows are still NaN in it, so the `blanked` break
+            # below behaves exactly as it does unsmoothed.
+            calibrated = self._final_record(self.current_gas)
             self._register_stats_trace(
-                "main:cal", f"{self.current_gas} (calibrated)", ax,
+                "main:cal",
+                f"{self.current_gas} (calibrated"
+                + (f", {smooth_label(smooth_n)}" if smooth_n else "") + ")", ax,
                 df["datetime"], calibrated, unit)
             if color_cal:
                 # A point per sample rather than a line: the colour is per row
@@ -5389,10 +5592,12 @@ class UcatsbGui(QMainWindow):
                   else f"{gas['ylabel']} (ambient)"]
         if filtered_line is not None:
             handles.append(filtered_line)
-            labels.append(f"filtered (≥ {GASES[self.current_gas]['valid_min']:g} {unit})")
+            labels.append(f"filtered (≥ {GASES[self.current_gas]['valid_min']:g} {unit})"
+                          + (f", {smooth_n}pt smooth" if smooth_n else ""))
         if cal_line is not None:
             handles.append(cal_line)
-            labels.append(f"calibrated ({calibration['mode']})")
+            labels.append(f"calibrated ({calibration['mode']})"
+                          + (f", {smooth_n}pt smooth" if smooth_n else ""))
         if cal_mean_scatter is not None:
             handles.append(cal_mean_scatter)
             labels.append("cal means (calibrated)")
@@ -5484,6 +5689,11 @@ class UcatsbGui(QMainWindow):
                       "(cal periods, flush and masked spans blanked)")
                 if cal_mean_scatter is not None:
                     notes.append("open red circles = cal means on the calibrated scale")
+                if smooth_n:
+                    notes.append(
+                        f"calibrated record: {smooth_n}-point box mean within each "
+                        f"stretch of good air; blanked spans stay blank and are "
+                        f"never averaged across")
             # Said whether or not the overlay is on: it changes the calibrated
             # record itself, which is what both exports ship, so the figure
             # would otherwise show a raw trace with no hint that the product
@@ -5547,6 +5757,11 @@ class UcatsbGui(QMainWindow):
                 f"{'' if n_below == 1 else 's'} below {floor:g} {unit} "
                 f"removed (sensor fault, not a measurement)"
             )
+            if smooth_n:
+                notes.append(
+                    f"filtered record: {smooth_n}-point box mean within each "
+                    f"stretch of kept data; removed spans stay blank and are "
+                    f"never averaged across")
         # Its own line, and outside the has_masking gate: a manual flag is the
         # one removal on this figure that no setting in the panel explains, so
         # it has to say so for every gas, floor or cal-bottle.
@@ -5983,16 +6198,21 @@ class UcatsbGui(QMainWindow):
             # Filtered, matching the red trace on the timeseries: a -2292 ppb
             # fault is not a point on a tracer-tracer plot, it is an outlier
             # that would set the axis range and drag the fit on its own.
-            values = self.df[gas["value_col"]].mask(self._removed_mask(gas_key))
+            values = self._final_record(gas_key)
             qual = gas["value_col"]
             if gas.get("valid_min") is not None:
                 qual += f" ≥ {gas['valid_min']:g}"
+            if self._smooth_points(gas_key):
+                qual += f", {smooth_label(self._smooth_points(gas_key))}"
             return values, None, unit, qual, None
         result = self._calibration_for(gas_key)
         if not (result or {}).get("ok"):
             return None, None, unit, None, (result or {}).get("reason", "no calibration")
         sigma = self._uncertainty_for(gas_key)[0] if self.corr_error_bars else None
-        return result["calibrated"], sigma, unit, "calibrated", None
+        qual = "calibrated"
+        if self._smooth_points(gas_key):
+            qual += f", {smooth_label(self._smooth_points(gas_key))}"
+        return self._final_record(gas_key), sigma, unit, qual, None
 
     def _corr_axis_flagged(self, gas_key):
         """What a MANUALLY FLAGGED row would have contributed to this axis.
@@ -6270,8 +6490,8 @@ class UcatsbGui(QMainWindow):
         # the consequence -- no gain correction on that axis, so the slope
         # inherits that instrument's scale error -- is the whole reason the
         # other axes are calibrated.
-        raw_axes = [gas for gas, qual in ((x_gas, x_qual), (y_gas, y_qual))
-                    if qual != "calibrated"]
+        raw_axes = [gas for gas in (x_gas, y_gas)
+                    if not GASES[gas].get("has_masking", True)]
         for gas in raw_axes:
             note = (f"{gas} has no cal bottles — plotted as recorded "
                     f"({GASES[gas]['value_col']}), not calibrated")
@@ -6295,6 +6515,16 @@ class UcatsbGui(QMainWindow):
             if corrected:
                 notes.append(f"{', '.join(corrected)} normalised to {target} "
                              f"before calibrating ({what} correction)")
+        # The window itself is on each axis label; this says what it does at a
+        # blanked span, since "3pt box smooth" alone invites the assumption
+        # that points either side of a cal gap were averaged together.
+        smoothed = [gas for gas in dict.fromkeys((x_gas, y_gas))
+                    if self._smooth_points(gas)]
+        if smoothed:
+            notes.append(
+                f"{', '.join(f'{g} {self._smooth_points(g)}pt' for g in smoothed)}"
+                f" box mean, within each stretch of good data only — "
+                f"blanked spans are never averaged across")
         # The fit summary rides in this block rather than in a legend: a
         # legend has to sit somewhere, and on a scatter that fills one corner
         # it lands either on the data or on this text.

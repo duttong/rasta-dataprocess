@@ -383,6 +383,116 @@ def smooth_pressure(datetimes, pressure, window_s):
     return smoothed.where(usable.notna(), p)
 
 
+# The box-smooth choices the GUI offers, in points. 0 is "None". Declared here
+# rather than in the GUI so a batch script asking for a smoothed record names
+# the same set of windows the app does.
+SMOOTH_POINT_CHOICES = (0, 2, 3, 4, 5, 6)
+
+
+def boxcar_smooth(datetimes, values, points):
+    """N-point boxcar (moving) mean of a finished record, in which NaN means
+    "this row is not part of the good data" -- a cal period, a flush, a masked
+    span, a hand flag, a sensor fault.
+
+    The question this answers is what a mean should do at the edge of such a
+    gap, and the answer is that **a gap is a wall**:
+
+    - **A masked row stays masked.** The output is NaN exactly where the input
+      is NaN. Averaging neighbours into a blanked row would resurrect it, and
+      `blanked` / the ICARTT `-99999` rows are defined by that NaN pattern.
+    - **No window crosses a gap.** The record is cut into runs of consecutive
+      valid rows, and every mean is taken inside its own run. Nothing from the
+      far side of a cal period or a flagged span ever reaches the near side,
+      so the result is identical to smoothing each stretch of good air by
+      itself. (The run is also cut where the *timestamps* jump by more than
+      the window could span: rows adjacent in the file but minutes apart in
+      time are not neighbours.)
+    - **The window SHRINKS SYMMETRICALLY at a wall**, as `smooth_pressure`
+      does at the ends of the flight: the half-width is capped at the distance
+      to the run's edge, so every mean stays centred on its own row. The row
+      next to a gap is averaged with one neighbour each side, and the row AT
+      the edge keeps exactly what it had. The alternatives were tried on
+      paper and each loses something: a one-sided full-width window is a
+      shifted mean, biased wherever the signal is trending, which is exactly
+      where a cell is clearing after a cal; dropping the edge rows to demand a
+      full window deletes data to make a statistic tidier; and padding invents
+      it. The cost of the shrink is only that edge rows are noisier than
+      interior ones by up to sqrt(N).
+
+    An even N has no window symmetric about a sample, so it is taken as the
+    N//2 rows behind plus the rest ahead -- centred half a sample (0.5 s at
+    1 Hz) early. The symmetric-shrink rule keeps that same offset at an edge.
+
+    Smoothing is **output-only**: it is applied to the calibrated record after
+    every mask has been blanked and is never fed back into the calibration,
+    whose cal means and drift nodes come from the unsmoothed measurement.
+    Because the calibration is linear and the window short, smoothing the
+    calibrated record is the same, to first order, as calibrating a smoothed
+    one -- without letting a cal injection's step leak into the air beside it.
+
+    Returns the numeric values unchanged for `points` < 2, so a caller can use
+    it unconditionally. `datetimes` and `values` are matched by position.
+    """
+    v = pd.to_numeric(values, errors="coerce")
+    n = int(points or 0)
+    if n < 2 or len(v) == 0:
+        return v
+
+    # Everything below works on the VALID rows only, in order. A run of valid
+    # rows is then a run of consecutive entries, which is what lets the window
+    # bounds be plain integer offsets with prefix sums.
+    times = pd.Series(pd.DatetimeIndex(datetimes))
+    flat = v.reset_index(drop=True)
+    valid = flat.notna()
+    if not valid.any():
+        return v
+    where = pd.Series(valid.index[valid])
+    x = flat[valid].reset_index(drop=True)
+    t = times[valid.to_numpy()].reset_index(drop=True)
+    m = len(x)
+
+    # A new run starts at the first valid row, after any NaN row, and across a
+    # time jump wider than the window could span at the record's own cadence
+    # (a duplicate or one or two dropped samples are not a jump).
+    starts = where.diff().ne(1)
+    dt = t.diff()
+    positive = dt[dt > pd.Timedelta(0)]
+    if len(positive):
+        starts |= dt > (n + 1) * positive.median()
+    run = starts.cumsum()
+    pos = run.groupby(run).cumcount()
+    size = run.groupby(run).transform("size")
+    behind, ahead = pos, size - 1 - pos
+
+    back = n // 2
+    fwd = n - 1 - back
+    # R = min(fwd, behind, ahead); L = min(back, behind, ahead + (back - fwd)):
+    # equal reach either side for an odd N (the symmetric shrink), and the
+    # even-N offset preserved at the far wall.
+    reach_fwd = pd.concat([ahead, behind], axis=1).min(axis=1).clip(upper=fwd)
+    reach_back = pd.concat([behind, ahead + (back - fwd)], axis=1).min(axis=1).clip(upper=back)
+
+    # Prefix sums of the mean-removed series (a flight is ~1e5 rows of ~400
+    # ppm, so the running total would otherwise lose digits), with a leading 0
+    # so a window starting at row 0 needs no special case.
+    centre = x.mean()
+    totals = pd.concat([pd.Series([0.0]), (x - centre).cumsum()], ignore_index=True)
+    k = pd.Series(range(m))
+    lo = (k - reach_back).to_numpy()
+    hi = (k + reach_fwd + 1).to_numpy()
+    window_n = (reach_back + reach_fwd + 1).to_numpy()
+    means = (totals.take(hi).to_numpy() - totals.take(lo).to_numpy()) / window_n + centre
+
+    out = pd.Series(float("nan"), index=v.index)
+    out.iloc[where.to_numpy()] = means
+    return out
+
+
+def smooth_label(points):
+    """How a smoothing choice reads in a legend, axis label or note."""
+    return f"{int(points)}pt box smooth" if points and int(points) >= 2 else "unsmoothed"
+
+
 def pt_correction_factor(pressure=None, pressure_target=D1_P_TARGET_MBARS,
                          temperature_c=None, temperature_target_k=T_GAS_TARGET_K,
                          temperature_reference_k=T_GAS_REFERENCE_K):
@@ -1675,6 +1785,26 @@ def companion_notes(gas_blocks, source_path=None, presync_rows=0):
                 f"calibrated here.")
         else:
             notes.append(f"{gas}: not calibrated -- {block.get('reason', 'no calibration')}")
+        if block.get("smooth_points") and block.get("final_kind") in FINAL_COLUMN_SUFFIX:
+            # Said for every smoothed gas, because it changes what the column
+            # means: from here on `slope * raw + intercept` no longer
+            # reproduces it -- it reproduces the value BEFORE the mean.
+            notes.append(
+                f"{gas}: {_column_for(block)} is smoothed with a "
+                f"{block['smooth_points']}-point box (moving) mean, taken "
+                f"after calibration and within each unbroken stretch of good "
+                f"rows. A blank row stays blank and no mean reaches across "
+                f"one; the window shrinks symmetrically at the edge of a "
+                f"stretch, so the row beside a gap keeps a centred (if "
+                f"shorter) mean and the edge row keeps its own value. "
+                + ("An even point count is centred half a sample early. "
+                   if block["smooth_points"] % 2 == 0 else "")
+                + (f"{gas}_cal_slope/{gas}_cal_intercept describe the "
+                   f"UNSMOOTHED calibrated value; "
+                   f"{gas}_cal_unc is a calibration uncertainty and is not "
+                   f"reduced by averaging."
+                   if block.get("final_kind") == "calibrated" else
+                   "The raw column is untouched."))
         for name, mask in block.get("masks", {}).items():
             if mask is not None and bool(mask.any()):
                 notes.append(f"{gas}_{name}: {int(mask.sum())} row(s)")
