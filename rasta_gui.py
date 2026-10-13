@@ -3314,7 +3314,7 @@ class RastaGui(QMainWindow):
 
     @staticmethod
     def _fill_smooth_combo(combo):
-        """None / 2pt ... 15pt, the point count riding as item data. One filler
+        """None / 3pt ... 21pt, the point count riding as item data. One filler
         for both panels so they cannot offer different windows.
 
         Editable as well, for testing other windows: any positive whole

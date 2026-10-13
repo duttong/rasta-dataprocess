@@ -385,8 +385,11 @@ def smooth_pressure(datetimes, pressure, window_s):
 
 # The box-smooth choices the GUI offers, in points. 0 is "None". Declared here
 # rather than in the GUI so a batch script asking for a smoothed record names
-# the same set of windows the app does.
-SMOOTH_POINT_CHOICES = (0, 2, 3, 5, 10, 15)
+# the same set of windows the app does. All ODD: an even window cannot be
+# centred on a sample (it sits half a sample early), and wherever the signal
+# trends that offset adds error -- visible as an even/odd sawtooth in the
+# residuals on the 2026-08-06 flight. Even counts can still be typed.
+SMOOTH_POINT_CHOICES = (0, 3, 5, 7, 9, 15, 21)
 
 
 def boxcar_smooth(datetimes, values, points, present=None):

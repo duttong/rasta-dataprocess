@@ -927,7 +927,9 @@ two gases' analyses and redraw the timeseries.
 
 ### Box smoothing (`boxcar_smooth`, `_final_record`, 2026-10-10)
 
-Per-gas N-point boxcar (None/2/3/5/10/15) of the **delivered record**, for all five
+Per-gas N-point boxcar (presets None/3/5/7/9/15/21 — **all odd** since
+2026-10-13: an even window is centred half a sample early, which adds error
+wherever the signal trends; any count can still be typed) of the **delivered record**, for all five
 gases. Qt-free function in `rasta_analysis.py`; the GUI's single application
 point is `RastaGui._final_record(gas)` (cached in `self._final`, cleared in
 `refresh()`), which the timeseries overlay, `_corr_axis` and both export
