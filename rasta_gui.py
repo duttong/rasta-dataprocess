@@ -1633,16 +1633,22 @@ class RastaGui(QMainWindow):
             self.on_corr_cal_control_changed)
         self.corr_smooth_p_label = QLabel("Smooth P:")
         self.corr_smooth_p_label.setToolTip(self.pressure_smooth_spin.toolTip())
+        # Two rows, as on the left panel: the two checkboxes plus "Smooth P:"
+        # and its spin box on one row asked ~360 px of the ~288 the box has,
+        # and clipped all three labels ("Pde", "Smoot", "Tde") in silence.
         corr_correct_row = QHBoxLayout()
         corr_correct_row.setSpacing(6)
         corr_correct_row.addWidget(self.corr_pressure_correct_check)
-        corr_correct_row.addWidget(self.corr_smooth_p_label)
-        corr_correct_row.addWidget(self.corr_pressure_smooth_spin)
         corr_correct_row.addWidget(self.corr_temperature_correct_check)
         corr_correct_row.addStretch(1)
         corr_correct_label = QLabel("Apply:")
         corr_correct_label.setToolTip(self.pressure_correct_check.toolTip())
         corr_cal_form.addRow(corr_correct_label, corr_correct_row)
+        corr_smooth_p_row = QHBoxLayout()
+        corr_smooth_p_row.setSpacing(4)
+        corr_smooth_p_row.addWidget(self.corr_pressure_smooth_spin)
+        corr_smooth_p_row.addStretch(1)
+        corr_cal_form.addRow(self.corr_smooth_p_label, corr_smooth_p_row)
 
         self.corr_flag_air_spin = QSpinBox()
         self.corr_flag_air_spin.setRange(0, 90)
@@ -1659,17 +1665,22 @@ class RastaGui(QMainWindow):
         corr_flag_air_label.setToolTip(self.flag_air_spin.toolTip())
         corr_cal_form.addRow(corr_flag_air_label, corr_flag_air_row)
 
+        # "Model:" is a form label here, and the fixed slope has a row of its
+        # own below rather than sharing the smoothing window's slot as on the
+        # left panel: label + combo + slope + R asked ~297 px of ~288 and
+        # clipped "fixed slope" to "fixed slop". The slope row is shown only
+        # under that model (_show_corr_drift_extra), so it costs nothing
+        # otherwise.
         corr_drift_row = QHBoxLayout()
         corr_drift_row.setSpacing(4)
         corr_drift_label = QLabel("Model:")
         corr_drift_label.setToolTip(self.drift_combo.toolTip())
-        corr_drift_row.addWidget(corr_drift_label)
         self.corr_drift_combo = QComboBox()
         self.corr_drift_combo.addItems(CAL_DRIFT_MODELS)
         self.corr_drift_combo.setToolTip(self.drift_combo.toolTip())
         self.corr_drift_combo.currentTextChanged.connect(
             self.on_corr_cal_control_changed)
-        corr_drift_row.addWidget(self.corr_drift_combo, 1)
+        corr_drift_row.addWidget(self.corr_drift_combo)
 
         self.corr_smooth_spin = QSpinBox()
         self.corr_smooth_spin.setRange(2, 21)
@@ -1688,8 +1699,16 @@ class RastaGui(QMainWindow):
         self.corr_fixed_slope_spin.setToolTip(self.fixed_slope_spin.toolTip())
         self.corr_fixed_slope_spin.valueChanged.connect(
             self.on_corr_cal_control_changed)
-        self.corr_fixed_slope_spin.setVisible(False)
-        corr_drift_row.addWidget(self.corr_fixed_slope_spin)
+        corr_drift_row.addStretch(1)
+        corr_cal_form.addRow(corr_drift_label, corr_drift_row)
+
+        # A container widget, not a bare layout, so the whole field can be
+        # hidden with its label -- Qt5's QFormLayout has no setRowVisible.
+        self.corr_fixed_slope_field = QWidget()
+        corr_slope_row = QHBoxLayout(self.corr_fixed_slope_field)
+        corr_slope_row.setContentsMargins(0, 0, 0, 0)
+        corr_slope_row.setSpacing(4)
+        corr_slope_row.addWidget(self.corr_fixed_slope_spin)
         self.corr_fixed_slope_reset_button = QToolButton()
         self.corr_fixed_slope_reset_button.setText("R")
         self.corr_fixed_slope_reset_button.setFixedSize(28, 22)
@@ -1699,9 +1718,13 @@ class RastaGui(QMainWindow):
             "Reset fixed slope to the constant-model value")
         self.corr_fixed_slope_reset_button.clicked.connect(
             self.on_corr_fixed_slope_reset)
-        self.corr_fixed_slope_reset_button.setVisible(False)
-        corr_drift_row.addWidget(self.corr_fixed_slope_reset_button)
-        corr_cal_form.addRow(corr_drift_row)
+        corr_slope_row.addWidget(self.corr_fixed_slope_reset_button)
+        corr_slope_row.addStretch(1)
+        self.corr_fixed_slope_label = QLabel("Slope:")
+        self.corr_fixed_slope_label.setToolTip(self.fixed_slope_spin.toolTip())
+        corr_cal_form.addRow(self.corr_fixed_slope_label, self.corr_fixed_slope_field)
+        self.corr_fixed_slope_label.setVisible(False)
+        self.corr_fixed_slope_field.setVisible(False)
 
         # Same state as the left panel's Smoothing box -- one dict, two views
         # of it -- and, unlike the rows above, enabled for every tracer
@@ -3903,12 +3926,14 @@ class RastaGui(QMainWindow):
         self._show_corr_drift_extra(self.corr_drift_combo.currentText())
 
     def _show_corr_drift_extra(self, model):
+        """The slope has its own row here (see where it is built), so the
+        smoothing window stays visible -- disabled unless `smooth` -- and only
+        the slope row comes and goes."""
         pinned = model == "fixed slope"
-        self.corr_fixed_slope_spin.setVisible(pinned)
+        self.corr_fixed_slope_label.setVisible(pinned)
+        self.corr_fixed_slope_field.setVisible(pinned)
         self.corr_fixed_slope_spin.setEnabled(pinned)
-        self.corr_fixed_slope_reset_button.setVisible(pinned)
         self.corr_fixed_slope_reset_button.setEnabled(pinned)
-        self.corr_smooth_spin.setVisible(not pinned)
         self.corr_smooth_spin.setEnabled(model == "smooth")
 
     def on_corr_fixed_slope_reset(self):
@@ -5162,8 +5187,23 @@ class RastaGui(QMainWindow):
         else:
             result = self._calibration_for(gas_key)
             base = result["calibrated"] if (result or {}).get("ok") else None
+        # `present` = rows the instrument reported and nobody struck out, so
+        # those outside it are skipped rather than treated as walls. Without
+        # it Ozone (about every 2 s into the 1 Hz file) was never averaged at
+        # all, and the Aeris gases' single-sample dropouts cut their windows
+        # short; see boxcar_smooth.
+        #
+        # A hand flag or a below-floor fault (_removed_mask = both) is skipped
+        # too, not walled: each says "this one reading is bad", not "the
+        # instrument stopped sampling air here", so the box just passes over
+        # it and the neighbours keep their full window. The row itself stays
+        # NaN either way (base is already blanked). Analysis masks -- cal,
+        # flush, warm-up/pressure/pumps -- remain walls: they mark spans that
+        # are not ambient air at all.
+        present = self.df[info["value_col"]].notna() & ~self._removed_mask(gas_key)
         final = (None if base is None
-                 else boxcar_smooth(self.df["datetime"], base, self._smooth_points(gas_key)))
+                 else boxcar_smooth(self.df["datetime"], base, self._smooth_points(gas_key),
+                                    present=present))
         self._final[gas_key] = final
         return final
 

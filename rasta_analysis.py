@@ -389,7 +389,7 @@ def smooth_pressure(datetimes, pressure, window_s):
 SMOOTH_POINT_CHOICES = (0, 2, 3, 5, 10, 15)
 
 
-def boxcar_smooth(datetimes, values, points):
+def boxcar_smooth(datetimes, values, points, present=None):
     """N-point boxcar (moving) mean of a finished record, in which NaN means
     "this row is not part of the good data" -- a cal period, a flush, a masked
     span, a hand flag, a sensor fault.
@@ -432,6 +432,20 @@ def boxcar_smooth(datetimes, values, points):
 
     Returns the numeric values unchanged for `points` < 2, so a caller can use
     it unconditionally. `datetimes` and `values` are matched by position.
+
+    **`present` separates "never measured" from "removed".** A row where the
+    instrument reported nothing is not a wall: it is not a row of that
+    instrument's record at all, and is skipped over as if absent from the
+    file. Without this a slow instrument logged into a faster file is never
+    smoothed -- the 2B ozone monitor reports about every 2 s into the 1 Hz
+    record, so every other row is NaN, every run of good air is one or two
+    readings long, and no window ever holds more than its own row. Pass the
+    raw column's `notna()` (the GUI also takes hand-flagged and below-floor
+    rows out of it, so a bad single reading is skipped rather than walled); the window then counts N of
+    that instrument's own readings. Masked rows (present, but NaN in `values`) are still walls,
+    and the time-jump test still cuts a run where readings are far apart, so
+    skipping an unreported row never bridges a real gap. None means every row
+    is present, i.e. every NaN is a wall.
     """
     v = pd.to_numeric(values, errors="coerce")
     n = int(points or 0)
@@ -444,6 +458,14 @@ def boxcar_smooth(datetimes, values, points):
     times = pd.Series(pd.DatetimeIndex(datetimes))
     flat = v.reset_index(drop=True)
     valid = flat.notna()
+    if present is not None:
+        present = pd.Series(present).reset_index(drop=True).astype(bool) | valid
+    else:
+        present = pd.Series(True, index=flat.index)
+    # Each row's position among the PRESENT rows: consecutive valid rows are
+    # neighbours when their ranks differ by one, however many unreported rows
+    # sit between them in the file.
+    rank = present.cumsum()
     if not valid.any():
         return v
     where = pd.Series(valid.index[valid])
@@ -454,7 +476,7 @@ def boxcar_smooth(datetimes, values, points):
     # A new run starts at the first valid row, after any NaN row, and across a
     # time jump wider than the window could span at the record's own cadence
     # (a duplicate or one or two dropped samples are not a jump).
-    starts = where.diff().ne(1)
+    starts = rank.iloc[where.to_numpy()].reset_index(drop=True).diff().ne(1)
     dt = t.diff()
     positive = dt[dt > pd.Timedelta(0)]
     if len(positive):

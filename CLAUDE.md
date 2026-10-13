@@ -950,6 +950,23 @@ disagree about whether a value was averaged.
   clears after a cal), dropping edge rows to force a full window (deletes
   data), padding (invents it). Even N is centred half a sample early; the far
   wall keeps that offset.
+- **An UNREPORTED row is not a wall; a MASKED one is** (`present=`,
+  2026-10-13). `_final_record` passes the raw column's `notna()`, and
+  `boxcar_smooth` skips rows outside it as if they were not in the file, so
+  the window counts N of that instrument's own readings. Without it NaN
+  meant "wall" whatever its cause, and two things broke silently: Ozone (the
+  2B logs ~every 2 s into the 1 Hz file, every other row NaN) was never
+  smoothed at all — effective window 1 point — and the Aeris gases' ~1200
+  isolated single-sample dropouts per flight cut their runs short, so CO2's
+  "15pt" averaged a median 9 points with a full window on only 31% of rows
+  (95% after). **Hand flags and below-floor faults are skipped too** —
+  `present` is `raw.notna() & ~_removed_mask(gas)` (= flags | floor) —
+  because each means "this one reading is bad", not "this is not ambient
+  air": the box passes over it and the neighbours keep their full window
+  (the user's call, 2026-10-13). Rows masked by the analysis (cal, flush,
+  warm-up/pressure/pumps) are present-but-NaN and still walls, and the time-jump test
+  (`> (n+1)` median steps among valid rows) still cuts a real gap. Don't
+  drop `present=` from the call: every gas's output depends on it.
 - **Stored as its own `smoothing:` block** in the flight conf, `{gas: n}`, not
   per-gas settings keys: Ozone/H2O have no settings block. `load_smoothing` /
   `smoothing_to_yaml`; part of `_current_state()`, so dirty state works.
@@ -986,7 +1003,8 @@ disagree about whether a value was averaged.
   not the analysis" rule the ICARTT header is not annotated.
 - **Verify after touching it:** NaN pattern identical with and without;
   `cal_points`, `span_gain`, `loo_rms`, `slope`, `sigma` identical; no leak
-  across a gap (perturb one side, other side bit-identical); odd-N ramp exact.
+  across a gap (perturb one side, other side bit-identical); odd-N ramp exact,
+  including with every other row unreported (`present=`).
 
 ### Config persistence: explicit save only
 
