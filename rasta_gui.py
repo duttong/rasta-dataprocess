@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QFontMetrics
+from PyQt5.QtCore import Qt, QTimer, QRegExp
+from PyQt5.QtGui import QFont, QFontMetrics, QRegExpValidator
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QComboBox, QDoubleSpinBox, QSpinBox, QLabel, QGridLayout,
@@ -499,16 +499,18 @@ def load_smoothing(path: Path) -> dict:
 
     Its own block rather than a key in each gas's settings block: Ozone and
     H2O carry no settings block at all (no masking, nothing to tune), and they
-    are two of the five gases this applies to. A value that is not one of the
-    offered windows is dropped rather than trusted, since it lands straight
-    in a window length.
+    are two of the five gases this applies to. A value that is not a
+    positive whole number is dropped rather than trusted, since it lands
+    straight in a window length. Any such count is kept, not just the
+    presets: the combo also takes a typed window, and a saved one must come
+    back as saved rather than silently reverting to unsmoothed.
     """
     loaded = _read_yaml(path).get("smoothing")
     if not isinstance(loaded, dict):
         return {}
     return {gas: int(n) for gas, n in loaded.items()
             if gas in GASES and isinstance(n, int) and not isinstance(n, bool)
-            and n in SMOOTH_POINT_CHOICES and n >= 2}
+            and n >= 2}
 
 
 def smoothing_to_yaml(smoothing: dict) -> dict:
@@ -1714,6 +1716,7 @@ class RastaGui(QMainWindow):
         self._fill_smooth_combo(self.corr_smooth_combo)
         self.corr_smooth_combo.setToolTip(self.SMOOTH_TOOLTIP)
         self.corr_smooth_combo.currentIndexChanged.connect(self.on_corr_smooth_changed)
+        self.corr_smooth_combo.lineEdit().editingFinished.connect(self.on_corr_smooth_changed)
         corr_smooth_row.addWidget(self.corr_smooth_combo)
         corr_smooth_row.addStretch(1)
         corr_cal_form.addRow(corr_smooth_row)
@@ -2484,6 +2487,7 @@ class RastaGui(QMainWindow):
         self._fill_smooth_combo(self.smooth_combo)
         self.smooth_combo.setToolTip(self.SMOOTH_TOOLTIP)
         self.smooth_combo.currentIndexChanged.connect(self.on_smooth_changed)
+        self.smooth_combo.lineEdit().editingFinished.connect(self.on_smooth_changed)
         smooth_label_widget = QLabel("Box smooth:")
         smooth_label_widget.setToolTip(self.SMOOTH_TOOLTIP)
         smooth_form.addRow(smooth_label_widget, self.smooth_combo)
@@ -3287,10 +3291,29 @@ class RastaGui(QMainWindow):
 
     @staticmethod
     def _fill_smooth_combo(combo):
-        """None / 2pt ... 6pt, the point count riding as item data. One filler
-        for both panels so they cannot offer different windows."""
+        """None / 2pt ... 15pt, the point count riding as item data. One filler
+        for both panels so they cannot offer different windows.
+
+        Editable as well, for testing other windows: any positive whole
+        number may be typed ("7" or "7pt"), and the validator refuses
+        anything else -- including 0 and negatives -- at the keyboard. The
+        presets are a shortlist, not the set of legal values, so a typed
+        count is never added to the list (NoInsert) and is read back from
+        the text by _smooth_text_points. 1 is a one-point box, i.e. None."""
         for points in SMOOTH_POINT_CHOICES:
             combo.addItem("None" if points == 0 else f"{points}pt", points)
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        # Prefixes of a match are Intermediate, so backspacing "10pt" through
+        # "10p" is allowed; an empty field reads as None.
+        combo.setValidator(QRegExpValidator(QRegExp(r"[1-9][0-9]{0,4}(pt)?|None|"), combo))
+
+    @staticmethod
+    def _smooth_text_points(text):
+        """The point count an editable smoothing combo's text names, 0 for
+        None/empty/anything unparseable."""
+        m = re.fullmatch(r"\s*([0-9]+)\s*(pt)?\s*", text or "")
+        return int(m.group(1)) if m else 0
 
     def _sync_smooth_controls(self):
         """Show each panel's smoothing combo the choice of the gas it edits:
@@ -3303,23 +3326,36 @@ class RastaGui(QMainWindow):
         if hasattr(self, "corr_smooth_combo") and hasattr(self, "corr_cal_target"):
             pairs.append((self.corr_smooth_combo, self._corr_cal_gas()))
         for combo, gas in pairs:
-            index = combo.findData(self._smooth_points(gas) if gas else 0)
+            points = self._smooth_points(gas) if gas else 0
+            index = combo.findData(points)
             combo.blockSignals(True)
-            combo.setCurrentIndex(max(index, 0))
+            if index >= 0:
+                combo.setCurrentIndex(index)
+                combo.setEditText(combo.itemText(index))
+            else:
+                # A typed (or saved) count with no preset: shown as text only.
+                combo.setCurrentIndex(-1)
+                combo.setEditText(f"{points}pt")
             combo.blockSignals(False)
             combo.setEnabled(bool(gas))
 
-    def on_smooth_changed(self, _index):
+    # Both read the combo's TEXT, not currentData(): connected to the
+    # dropdown's index change and to the line edit's editingFinished, and a
+    # typed count has no item behind it. _set_smoothing ignores a no-change,
+    # so the two signals firing for one edit cost nothing.
+    def on_smooth_changed(self, *_):
         if self._loading or self._initializing or self.current_gas is None:
             return
-        self._set_smoothing(self.current_gas, self.smooth_combo.currentData())
+        self._set_smoothing(self.current_gas,
+                            self._smooth_text_points(self.smooth_combo.currentText()))
 
-    def on_corr_smooth_changed(self, _index):
+    def on_corr_smooth_changed(self, *_):
         if self._loading or self._initializing:
             return
         gas = self._corr_cal_gas()
         if gas:
-            self._set_smoothing(gas, self.corr_smooth_combo.currentData())
+            self._set_smoothing(gas,
+                                self._smooth_text_points(self.corr_smooth_combo.currentText()))
 
     def _set_smoothing(self, gas, points):
         """The one writer of `self.smoothing`, from either panel.
@@ -3332,6 +3368,9 @@ class RastaGui(QMainWindow):
         """
         points = int(points or 0)
         if points == self._smooth_points(gas):
+            # Still resync: typing "05" or "None " leaves the field showing
+            # something other than the canonical text for an unchanged value.
+            self._sync_smooth_controls()
             return
         if points >= 2:
             self.smoothing[gas] = points

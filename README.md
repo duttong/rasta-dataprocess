@@ -64,7 +64,7 @@ Settings are kept per gas, except the cal tanks, which are per flight.
 | **Copy settings to all gases** | Copies the trim, pressure, Smooth P, Pumps on, Flag Air and cal-window values to the other gases. Pdelt/Tdelt, drift model and smoothing stay as they are. |
 | **Calibration: Window** | Per tank, which part of each injection is averaged. Offsets in seconds from the injection's last row, e.g. `-15` to `-1`. |
 | **Calibration: Model** | How the calibration follows the tanks in time. See [Calibration](#calibration). |
-| **Smoothing: Box smooth** | None or 2–6 point average of the delivered record. See [Smoothing](#smoothing). |
+| **Smoothing: Box smooth** | None, a 2/3/5/10/15 point preset, or any typed point count: a moving average of the delivered record. See [Smoothing](#smoothing). |
 | **Flagged Points** | Count of hand-flagged points, with Undo and Clear. See [Flagging](#flagging-bad-points-flag). |
 
 Trim, pressure and Pumps on are applied **before** the cal means are
@@ -274,7 +274,8 @@ usable tank falls back to an offset-only correction and says so.
 
 ## Smoothing
 
-**Box smooth** (None, 2pt … 6pt) sits between *Calibration* and *Flagged
+**Box smooth** (None, 2pt, 3pt, 5pt, 10pt, 15pt, or type any positive whole
+number of points) sits between *Calibration* and *Flagged
 Points* on the left panel, and in *Calibration Settings* on the Correlations
 tab. It is one setting seen from two places. It is chosen per gas, for all
 five, and saved in the flight's `smoothing:` block.

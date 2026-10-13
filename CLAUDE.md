@@ -927,7 +927,7 @@ two gases' analyses and redraw the timeseries.
 
 ### Box smoothing (`boxcar_smooth`, `_final_record`, 2026-10-10)
 
-Per-gas N-point boxcar (None/2–6) of the **delivered record**, for all five
+Per-gas N-point boxcar (None/2/3/5/10/15) of the **delivered record**, for all five
 gases. Qt-free function in `rasta_analysis.py`; the GUI's single application
 point is `RastaGui._final_record(gas)` (cached in `self._final`, cleared in
 `refresh()`), which the timeseries overlay, `_corr_axis` and both export
@@ -963,6 +963,18 @@ disagree about whether a value was averaged.
   not widen). Both go through `_set_smoothing` → `refresh(preserve_view=True)`;
   `_sync_smooth_controls` repoints them from `_select_gas` and
   `_sync_corr_cal_controls` (before that method's early return).
+- **The combos are editable; the presets are a shortlist, not the legal set**
+  (2026-10-13, for testing other windows). Any positive whole number can be
+  typed (`7` or `7pt`); a `QRegExpValidator` refuses 0, negatives and other
+  text at the keyboard, and `NoInsert` keeps typed counts out of the list.
+  The handlers therefore read the **text** (`_smooth_text_points`), not
+  `currentData()`, and are connected to `lineEdit().editingFinished` as well
+  as the index change — `_set_smoothing` ignores a no-change, so both firing
+  is harmless. `_sync_smooth_controls` shows a count with no preset as edit
+  text at index -1. `load_smoothing` accepts **any** int ≥ 2, not just
+  `SMOOTH_POINT_CHOICES`: it used to filter to the presets, which silently
+  reverted a saved 6pt to unsmoothed once the list changed — don't put that
+  filter back.
 - **Visible only with the overlay on.** The raw trace is never smoothed, so
   with the toolbar's Calibrated combo on Off there is nothing to see on the
   Timeseries; Correlations and the exports always use it. The legend, note

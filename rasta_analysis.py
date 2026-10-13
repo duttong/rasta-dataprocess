@@ -386,7 +386,7 @@ def smooth_pressure(datetimes, pressure, window_s):
 # The box-smooth choices the GUI offers, in points. 0 is "None". Declared here
 # rather than in the GUI so a batch script asking for a smoothed record names
 # the same set of windows the app does.
-SMOOTH_POINT_CHOICES = (0, 2, 3, 4, 5, 6)
+SMOOTH_POINT_CHOICES = (0, 2, 3, 5, 10, 15)
 
 
 def boxcar_smooth(datetimes, values, points):
