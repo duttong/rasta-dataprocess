@@ -392,6 +392,32 @@ def smooth_pressure(datetimes, pressure, window_s):
 SMOOTH_POINT_CHOICES = (0, 3, 5, 7, 9, 15, 21)
 
 
+def format_time_axis(ax):
+    """Date ticks on `ax`'s x axis that gain seconds when zoomed in.
+
+    `HH:MM` while the ticks are a minute or more apart; `HH:MM:SS` once they
+    are closer -- a fixed `%H:%M` labelled every tick of a ten-second zoom
+    "19:52", which made picking out one 2 s ozone reading to flag guesswork.
+    The formatter reads the locator's spacing at draw time, so it follows
+    pan and zoom with no redraw of ours. Shared so every time axis (the
+    timeseries and the calibration residuals) labels a zoom the same way.
+    """
+    locator = mdates.AutoDateLocator()
+    formatter = mdates.AutoDateFormatter(locator)
+    # Keys are the tick spacing in days; the largest key not exceeding the
+    # spacing wins. Everything a minute and up reads as clock time; below a
+    # minute the seconds are the information.
+    formatter.scaled = {
+        1.0: "%H:%M",
+        1 / 24: "%H:%M",
+        1 / (24 * 60): "%H:%M",
+        1 / (24 * 3600): "%H:%M:%S",
+        1 / (24 * 3600 * 1e6): "%H:%M:%S",
+    }
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+
+
 def boxcar_smooth(datetimes, values, points, present=None):
     """N-point boxcar (moving) mean of a finished record, in which NaN means
     "this row is not part of the good data" -- a cal period, a flush, a masked
@@ -2477,8 +2503,7 @@ def plot_calibration_panels(fig, result, gas_key, ylabel, datetimes, unit=""):
         ax.tick_params(colors=MUTED_COLOR, labelsize=8)
     ax_resp.tick_params(labelbottom=False)
     ax_coef.tick_params(labelbottom=False)
-    ax_res.xaxis.set_major_locator(mdates.AutoDateLocator())
-    ax_res.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    format_time_axis(ax_res)
     for label in ax_res.get_xticklabels():
         label.set_rotation(45)
         label.set_horizontalalignment("right")

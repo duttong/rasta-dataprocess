@@ -615,6 +615,15 @@ resetting on every masking/averaging tweak or aux-trace change:
   Only `on_gas_changed` skips `preserve_view` — switching species changes
   the y-range meaning entirely, so a full rescale there is correct.
 
+**Time axes go through `format_time_axis`** (shared module, 2026-10-13):
+`AutoDateFormatter` with `HH:MM` for tick spacing of a minute or more and
+`HH:MM:SS` below it, so a zoom onto a few readings is labelled to the second
+(a fixed `%H:%M` labelled every tick of a 40 s zoom "19:52", which made
+flagging one 2 s ozone reading guesswork). It reads the spacing at draw time,
+so pan/zoom need nothing from us. Use it for any new time axis rather than a
+hardcoded `DateFormatter`; the Correlations colorbar's `%H:%M` is a colour
+scale over the whole flight and is deliberately left alone.
+
 ### Box stats ("Stats" toolbar toggle)
 
 A checkable `QAction` appended to the stock `NavigationToolbar` (not declared

@@ -42,7 +42,7 @@ from rasta_analysis import (
     most_common_serial, mean_std_label, calibrate_series, interp_hold,
     post_cal_flush_mask,
     cal_switch_mask, below_floor_mask, smooth_pressure, pt_correction_factor,
-    boxcar_smooth, smooth_label, SMOOTH_POINT_CHOICES,
+    boxcar_smooth, smooth_label, SMOOTH_POINT_CHOICES, format_time_axis,
     O3_VALID_MIN_PPB, H2O_VALID_MIN_PPM,
     box_stats, calibration_uncertainty, linear_fit,
     plot_calibration_panels,
@@ -5717,8 +5717,7 @@ class RastaGui(QMainWindow):
         date_str = plot_data["datetime"].iloc[0].strftime("%Y-%m-%d") if not plot_data.empty else ""
         ax.set_xlabel(f"Time (UTC-ish, {date_str})", color=MUTED_COLOR)
 
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        format_time_axis(ax)
 
         ax.grid(True, color=GRID_COLOR, linewidth=0.8)
         for spine in ax.spines.values():
